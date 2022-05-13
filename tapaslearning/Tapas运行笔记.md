@@ -12,7 +12,9 @@
 
 1. 创建新容器：
 ```
-docker run -itd [宿主机目录]:[容器目录] --gpus all --name [容器名] --shm-size="2g"  pytorch/pytorch
+docker run -itd -v [宿主机目录]:[容器目录] --gpus all --name [容器名] --shm-size="2g"  pytorch/pytorch
+
+<!-- docker run -itd -v /home/chensiqin/sqtorch2022:/files --gpus all --name sqtorch2022 --shm-size="2g" pytorch/pytorch -->
 ```
 
 若不限定版本，则默认安装cpu版

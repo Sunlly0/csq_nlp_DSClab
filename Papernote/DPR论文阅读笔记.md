@@ -23,10 +23,10 @@ code: https://github.com/facebookresearch/DPR
 
 ### 以往研究
 
-+ 检索器效果不佳，即使Reader部分的效果很好，也整体准确率不高。检索阶段成为开放问答的瓶颈
++ 检索器效果不佳，即使Reader部分的效果很好QA也整体准确率不高。检索阶段成为开放问答的瓶颈
 + 稀疏表示 TF-IDF 和 BM25 对语义信息不敏感
 + 已有一些密集表示的研究，但训练需要大量的标注数据，在BERT提出前还没有人做到
-+ 预训练模型BERT的出现和逆完形填空(inverse cloze task, ICT)的预训练方法的提出，很适合QA任务。但预训练的计算成本较高，同时没有用到 `问题+答案对` 对检索效果做提升，得到的结果可能次优。
++ 预训练模型BERT的出现和逆完形填空(inverse cloze task, ICT)的预训练方法的提出，很适合QA任务。但预训练的计算成本较高，同时没有用到 问题+答案对 对检索效果做提升，得到的结果可能次优。
 
 
 ### 模型
@@ -46,48 +46,48 @@ $sim(q,p)=E_Q(q)^TE_P(p)$。
 
 #### 3. 索引
 
-用FAISS（Facebook提出的一个搜索库，C++）建立索引，实现快速查找和问题相似度最高的k个段落。
+用FAISS（Facebook 提出的一个搜索库，C++）建立索引，实现快速查找和问题相似度最高的 k个段落。
 
 #### 4. encoder训练
 
-+ 目的：训练encoder，使问题和答案在转换成向量后距离较小。对于BERT来说相当于微调。
-+ 输入：带标签的数据：成对的问题+段落对。训练段落称为Gold passage。
++ 目的：训练 encoder 使问题和答案在转换成向量后距离较小。对于BERT来说相当于微调。
++ 输入：带标签的数据：成对的问题+段落对。训练段落称为 Gold passage。
 + 损失函数：对于一个问题，同时利用正样本（positive passage，即和该问题成对的段落）和负样本（negative passages）训练。
 $L(q_i,p_,^{+},p_{i,1}^{-},...) = -log(e^sim(q_i,p_i^{+})/e^sim(q_i,p_i^{+})+sum^n_{j=1}e^sim(q_i,p_{i,j}^{-}))$
 
 + 负样本选择：有三种方式：
   1. 随机从语料库选择
-  2. 选经过BM25检索相关，但是并不包含answer的段落
-  3. 从其他的gold passage中选
+  2. 选经过 BM25 检索相关，但是并不包含 answer 的段落
+  3. 从其他的 gold passage 中选
 
-  论文中提到效果最好的方式是从同mini-batch中取n-1个gold passages，再加1个BM25选出的段落。
+  论文中提到效果最好的方式是从同 mini-batch 中取 n-1 个 gold passages，再加1个BM25选出的段落。
 
 
 ### 实验
 
 #### Retirver
-+ NQ(Natural Questions)：来自google search queries和标注的Wikipedia articles。
++ NQ (Natural Questions)：来自google search queries和标注的Wikipedia articles。
 + TriviaQA：网络爬取的问答。
-+ WQ(WebQuestion)：
-+ TREC(CuratedTREC)：
++ WQ (WebQuestion)：
++ TREC (CuratedTREC)：
 + SQuAD v1.1：阅读理解的问答任务。问题中缺少段落的相关信息，不太适合开领域设置。
 
 用BM25做基线。
 
 ![](Paperphoto/dpr_retriever.png)
 
-指标用的是前20/100的检索段落中是否包含answer（注：感觉不太适合表格。）
+指标用的是前 20/100 的检索段落中包含 answer 的比例（注：感觉不太适合表格。）
 
 #### end-to-end QA
 
-在k个检索到的段落中提取段落跨度（span），并计算分数，取分数最高的跨度作为最终结果。
+在 k 个检索到的段落中提取段落跨度（span），并计算分数，取分数最高的跨度作为最终结果。
 
 ![](Paperphoto/dpr_qa.png)
 
-BM25对关键词敏感，但对语义关系处理差（基于词频，对同义词处理不好），而DPR擅长语义关系，但不太能处理突出的短语。经过多轮训练的BM25+DPR在某些数据集上能取得较好的效果。
+BM25 对关键词敏感，但对语义关系处理差（基于词频，对同义词处理不好），而 DPR 擅长语义关系，但不太能处理突出的短语。经过多轮训练的 BM25+DPR 在某些数据集上能取得较好的效果。
 
 ### 读后启发
 
-+ 将BERT替换为Tapas来强化对表格的embedding。（已经有人做过）
-+ cross-attention的理解？
-+ 通过QA阶段的验证来优化索引排序。应用到Text-to-SQL，可以用执行引导来提升检索候选的质量。（甚至强化检索的训练）
++ 将 BERT 替换为 Tapas 来强化对表格的 embedding。（可惜已经有人做过了）
++ cross-attention 的理解？
++ 通过 QA 阶段的验证来优化索引排序 (rerank)。应用到 Text-to-SQL，可以用执行引导来提升检索候选的质量。（甚至强化检索的训练）
