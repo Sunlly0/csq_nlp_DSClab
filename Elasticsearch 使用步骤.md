@@ -10,7 +10,7 @@
 
 - 节点（Node） 一个es实例即为一个节点。
 
-  
+
 
 - 索引（Index） 即拥有相似文档的集合
 
@@ -55,6 +55,66 @@ https://www.elastic.co/cn/downloads/elasticsearch
 **解决：**修改[elasticsearch](https://so.csdn.net/so/search?q=elasticsearch&spm=1001.2101.3001.7020).yml配置文件
 
 将 **xpack.security.enabled **设置为false即可
+
+#### ubuntu container 中安装 Elasticsearch
+
+1. 安装jdk
+
+```
+apt-get install openjdk-default-jdk
+```
+
+验证java安装：
+```
+java -version
+```
+
+2. 下载 elasticsearch 安装包
+
+官网 https://www.elastic.co/cn/downloads/elasticsearch
+
+```
+wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-8.2.2-linux-x86_64.tar.gz
+```
+
+3. 先新建一个用户，处于安全考虑，ElasticSearch默认不允许以root账号运行。
+
+```
+创建用户：useradd esuser
+设置密码：passwd esuser
+```
+
+4. 启动ElasticSearch
+
+启动前先给用户权限，然后把用户切换到用户
+
+```
+chgrp -R esuser ./es
+chown -R esuser ./es
+chmod 777 es
+su esuser
+```
+启动ElasticSearch
+```
+./bin/elasticsearch
+```
+**问题：**
+
+1. 也遇到 received plaintext http traffic on an https channel, closing connection... 问题
+
+解决：见上
+
+2. 运行./bin/elasticsearch 的时候，进程由于资源占用太高被killed，无法运行。
+
+解决：修改容器设置
+
+方式一: -m参数限制
+创建容器时我们可以添加-m参数限制容器的内存占用。单位是b,k,m,b
+例如:
+```
+docker run -dit --name test -m 400m -p 3306:3306 mysql
+#创建mysql的镜像实例，并限制容器占用内存大小为400m
+```
 
 #### 安装可视化插件 head
 
@@ -167,7 +227,7 @@ POST test/_doc/1
    GET twitter/_doc/1/
    ```
    执行结果：
-   
+
    ```json
    {
      "_index" : "twitter",
@@ -206,10 +266,10 @@ POST test/_doc/1
        "user" : "GB"
      }
    }
-   
+
    ```
 
-   
+
 
 **POST：** 更新
 在进行添加数据时，如果想要id自动增长，那么我们需要使用POST
@@ -432,18 +492,18 @@ curl -H 'Content-Type: application/x-ndjson' -XPOST 'localhost:9200/bank/account
           ]
         }
       }
-      
+
       ```
 
       可以看到该问题 What is the current series where the new series began in June 2011? 检索时，所有表格中 BM 25 相似度分数最高的就是表 id: 1-1000181-1， 和 groundtruth 相同。
-      
+
       8. 修改默认配置
-      
+
          修改b=0.72
-      
+
          ```
          POST wikisql_train/_close
-         
+
          PUT wikisql_train/_settings
          {
            "index" : {
@@ -455,12 +515,12 @@ curl -H 'Content-Type: application/x-ndjson' -XPOST 'localhost:9200/bank/account
                }
            }
          }
-         
+
          POST wikisql_train/_open
          ```
-      
+
          修改查找返回结果的个数：调整 size=20，默认为10
-      
+
          ```
          GET /wikisql_train/_search
          {
@@ -472,9 +532,9 @@ curl -H 'Content-Type: application/x-ndjson' -XPOST 'localhost:9200/bank/account
                }
          }
          ```
-      
-         
-   
+
+
+
 
 ## python 中使用 elasticsearch
 
