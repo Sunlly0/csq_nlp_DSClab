@@ -169,7 +169,7 @@ def __eq__(self, other):
 
 虽然 excute 的代码没有修改，但表的 id 修改后，from ... col_name 也应该是跟着变了，取得random_table 上相应的列。
 
-在 random_table 的生成结果的表格上，有242/1000 个问题无法执行。执行准确度不出意外的低，为0.005.
+在 random_table 的生成结果的表格上，有242/1000 个问题无法执行。执行准确度不出意外的低，为0.005。origin_table 的结果不变。
 
 random_table:
 ![](assets/HydraNet处理记录-bee0c41c.png)
