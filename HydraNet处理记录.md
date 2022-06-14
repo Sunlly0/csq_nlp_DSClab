@@ -9,7 +9,7 @@ github代码：https://github.com/lyuqin/HydraNet-WikiSQL
 
 ---
 
-### 训练模型
+### 1. 训练模型
 
 1. 根据运行笔记训练HydraNet模型
 
@@ -23,7 +23,7 @@ wikitest.jsonl: overall:83.2, agg:91.3, sel:97.4, wn:98.1, wc:94.8, op:99.1, val
 论文结果：
 dev 83.5, test 83.4
 
-### 以 前1000个question为例，比较随机打乱表格顺序后的模型预测结果
+### 2.以前1000个question为例，比较随机打乱表格顺序后的模型预测结果
 
 1. 修改wikisql_gendata.py，仅改了 dataset 中的 column_meta，得到一个问题-random table 的 test集。
 
@@ -176,3 +176,80 @@ random_table:
 
 origin_table:
 ![](assets/HydraNet处理记录-e510de95.png)
+
+### 3.处理数据集：对于test集，删除执行无答案的例子，和bm25找表gold truth 的表在100个以外的例子
+
++ 删除执行无结果的 question 例子
+
+  本来想试试用 tapas 的处理数据集的代码（能得到答案坐标，然后找结果），但是效果不理想，舍弃的question 过多，怀疑代码哪里有误。
+
+  后来用的HydraNet中的 DB.engine 执行来得到结果，将执行 error 和结果为 [None] 的例子舍弃。(data_process_by_dbengine.py)结果如下：
+
+  train:56355-->52032
+  test:15878-->14599(test_without_none_answer.jsonl)
+  dev:8421-->7764
+
+  结果总体而言比较合理
+
++ 删除bm25 top100 还没找到 gold 的 table 的question
+
+  处理 test.tables.jsonl：加入 "meta_data"一项，方便检索的后续预测；并且将"page_title" 项加入 "content",提升了检索效果 （table_process_test.py）
+
+  将处理后的数据导入 index（upload_table_data_test.py）
+
+  通过检索得到检索的结果:hit or not hit，来对question 做删除。bm25 算法使用默认值（k1=1.2,b=0.75)（wikisql_elastic_python_test_remove_out100_tables.py）结果如下：
+
+  test：14599--> 13225(test_remove_out100_table.jsonl)
+  筛除了1374个例子，原本 0.906的top100准确率变为100%。表明结果合理。
+
+### 4. 基于bm25 的 Retrieve-predict-excute 实现：用bm25 找分数最高的表，并做预测，看 retrive_acc/ex_acc
+
+以top_k=1 为例，预测的 retrive_acc:
+bm25_test: k1= 1.2 , b= 0.75  top_k= 1  hit_accuracy: 0.5116068052930056(wikisql_elastic_bm25_and_hydranet_predict.py)
+
+设计了以下函数，得到模型预测的sql 和最终的执行结果：
+```python
+examples=get_examples(question,hits)
+sql=predict_by_hydranet(examples)
+res=excute_sql(sql,hit_table,hit_column_meta)
+```
+
+将执行结果和表格 hit 的结果做一个统计和对比。看一看 res 和 hit_excute 的结果是否差距较大，是否可以用执行结果来对找表的准确情况做评估。
+```python
+print("***",num,"---------------------")
+if hitResult:
+   print("gold_table:",ground_truth_table)
+   if res==True:
+       hit_excute_correct_count=hit_excute_correct_count+1
+   count = count + 1
+else:
+   print("gold_table:",ground_truth_table)
+   print("hit_table:",hit_table)
+   if res==False:
+       not_hit_excute_correct_count= not_hit_excute_correct_count+1
+   not_hit_count= not_hit_count+1
+```
+
+结果如下，对于 hit 的情况，excute_correct是指：结果不为空/执行无错误/预测的col在表范围内；
+
+对于not_hit 即选错表了的情况，excute_correct是指：执行错（比较典型的是数据类型和操作符不匹配）、结果为空、预测的col 超过表的范围。
+![](assets/HydraNet处理记录-d41ef1de.png)
+
+|         | count | excute_correct_count |
+| ------- | ----- | -------------------- |
+| hit     | 6766  | 6276                 |
+| not_hit | 6459  | 4543                 |
+
+从结果中可以看到，对于hit 的情况， excute_correct_count还是比较高，比例占总数的92.76%，符合我们的预期。中间有一定的差距，个人觉得是来源于模型本身的误差。同时 EG 对模型的提升也挺大。
+
+对于 not_hit 的情况，excute_correct_count/count=70.336%，还是算比较高的，但是没有达到预期（预期 90% 以上）分析原因如下：
+
+1. 执行的时候取的列序号（对于SQL的相等判断来说，不能取列序号，但是对于执行，取列名+random_table 和取列序号的结果是一样的），此时，对于不涉及到where的执行（random_table 中，where_num=0的概率很高），则不会产生执行错误。
+
+2. 对于问题的聚合符是 count 的问题来说，也不容易产生执行错误。
+
+3. 模型本身也会带来一定的误差
+
+那么，EG 对于检索的提升效果到底能不能达到实用呢？我们估算一下，
+
+一个表如果 执行 correct为False，则是 random_table 的概率约为：0.7 * 0.5 /(0.7*0.5+0.08 * 0.5)= 90% （贝叶斯公式活学活用），概率还是非常高的。
