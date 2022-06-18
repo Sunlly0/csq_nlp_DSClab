@@ -253,3 +253,30 @@ else:
 那么，EG 对于检索的提升效果到底能不能达到实用呢？我们估算一下，
 
 一个表如果 执行 correct为False，则是 random_table 的概率约为：0.7 * 0.5 /(0.7*0.5+0.08 * 0.5)= 90% （贝叶斯公式活学活用），概率还是非常高的。
+
+一个表如果 执行 correct 为True，则是random_table的概率为（0.3 * 0.5) /(0.3 * 0.5 +0.5 * 0.92)=24% ，概率比较低但是有一定概率。
+
+用False 的执行结果来作为重要的候选 rerank 分数项还是基本比较合理的。
+
+*
+修改了判断错误的条件，取消了col 超过表格范围（认为包含在 error 中），同时补充了 len(pred)==0 和 pred[0]==None 并列；
+结果：
+
+|         | count | excute_correct_count |
+| ------- | ----- | -------------------- |
+| hit     | 6766  | 6217                 |
+| not_hit | 6459  | 4837                 |
+
+not_hit 的 correct 增长了许多，excute_correct_count/count =74.89%
+
+### 5. 基于bm25 的 Retrieve-predict-excute top5 实现：用bm25 找分数最高的前 100 个表，并做预测，将 res中的False 情况去掉，取前 top5,看 retrive_acc
+
+|         | count |
+| ------- | ----- |
+| hit     | 12441 |
+| not_hit | 784   |
+| total   | 13225 |
+
+top5_retrive_acc=12441/13225=94.07%
+
+准确率有了大幅提升，说明执行引导的方法有效
