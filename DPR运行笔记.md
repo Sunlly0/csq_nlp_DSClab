@@ -64,7 +64,7 @@ output_dir=test_nq_20220616
 
 ### 处理记录
 
-1. 将 wikisql 训练集、测试集做处理，训练 DPR
+**1. 将 wikisql 训练集、测试集做处理，训练 DPR**
 
 处理数据集，将 前面筛除过的 test 集 中的table，出现过的table 保留，没有出现过的table删除(wikisql_remove_tables_out100.py)，形成新的 test.tables.jsonl(test.tables_remove_out100.jsonl)
 
@@ -201,3 +201,137 @@ transformers.logging.set_verbosity_error()
 ** 但是，截取表格后，表格内容信息不完整，会不会影响表格性能？（希望模型能学习到如果 question 和内容有token 相同，他们的相似度会更高 这一点）
 
 ** 技巧：dpr 通过log 打印了输出日志，效果比 nohup 的好，后续可以学一下。
+
+在wikisql上训练后，用 test 做评估，结果不太理想：
+
+仅在 test 的 pos/neg 样本上做测试，
+correct prediction ratio  4541/13216 ~  0.343599
+
+**2. 下载官方的模型检查点，生成 embeddings（将 passage 编码为向量形式）**
+
+由于上面的模型效果不好，决定先用官方训练好的模型先把代码跑通。
+
+下载官方检查点：
+
+```Python
+  "checkpoint.retriever.single.nq.bert-base-encoder": {
+      "s3_url": "https://dl.fbaipublicfiles.com/dpr/checkpoint/retriever/single/nq/hf_bert_base.cp",
+      "original_ext": ".cp",
+      "compressed": False,
+      "desc": "Biencoder weights trained on NQ data and HF bert-base-uncased model",
+  },
+```
+
+修改 generate_dense_embeddings.py 中的配置参数：
+
+```Python
+def main(cfg: DictConfig):
+
+    ## add args by Sunlly
+    # cfg.model_file="/nlp_files/DPR/outputs/2022-06-16/08-59-29/test_nq_20220616/dpr_biencoder.3"
+    cfg.model_file="/nlp_files/DPR/model/hf_bert_base.cp"
+    # cfg.ctx_src="/nlp_files/DPR/nq-dev-small.json"
+    # cfg.ctx_src="/nlp_files/DPR/downloads/data/wikipedia_split/psgs_w100.tsv"
+    cfg.ctx_src="dpr_wiki"
+    cfg.out_file="/nlp_files/DPR/embeddings/nq"
+```
+
+修改 default_dources.yml:
+
+```
+dpr_wiki:
+  _target_: dpr.data.retriever_data.CsvCtxSrc
+  # file: data.wikipedia_split.psgs_w100
+  file: "/nlp_files/DPR/downloads/data/wikipedia_split/psgs_w100.tsv"
+  id_prefix: 'wiki:'
+
+dpr_nq:
+## 用于编码的text 形式
+  _target_: dpr.data.retriever_data.CsvQASrc
+  # file: /nlp_files/DPR/nq-dev-small.json
+  file: /nlp_files/DPR/nq-test.csv
+  # id_prefix: 'nq-small:'
+```
+注意： cfg.ctx_src 不能直接指定路径，需要在 default_dources.yml 中去找。如果是 dpr_wiki 并指定 `file: data.wikipedia_split.psgs_w100` 会自动下载 psgs_w100.tsv（12G）。没有用 nq 的数据集，此处相当于先用官网的例子跑通。
+
+**后续需要按照 tsv 的格式构建 tables 的数据集。
+
+修改了 gen_embs.yaml，用处不大。
+
+修改了原代码中的 end_idx：
+```Python
+# end_idx = start_idx + shard_size
+end_idx=start_idx +200
+```
+因为只想跑个例子，原数据集的 passage 太多了。所以相当于只取了前 200条生成 ctx 向量。
+
+开始跑代码：
+```
+python generate_dense_embeddings.py
+```
+
+生成的向量结果在 embeddings 中，是个打不开的二进制文件
+
+![](assets/DPR运行笔记-8d05c264.png)
+
+**3. 根据生成好了的 ctx 向量，编码问题做检索**
+
+代码在 dense_retriever.py。
+
+修改配置：
+
+```Python
+@hydra.main(config_path="conf", config_name="dense_retriever")
+def main(cfg: DictConfig):
+    cfg = setup_cfg_gpu(cfg)
+
+## add args by Sunlly
+    cfg.model_file="/nlp_files/DPR/model/hf_bert_base.cp"
+    cfg.qa_dataset="nq_test"  #/nlp_files/DPR/conf/datasets/retriever_default.yaml
+    cfg.ctx_datatsets=["dpr_wiki"] ## need [] is a dict
+    cfg.encoded_ctx_files=["/nlp_files/DPR/embeddings/nq_0"] ## need [] is a dict
+    cfg.out_file="/nlp_files/DPR/retriever_validation"
+```
+
+retriever_default.yaml:
+```
+nq_test:
+  _target_: dpr.data.retriever_data.CsvQASrc
+  # file: data.retriever.qas.nq-test
+  file: "/nlp_files/DPR/nq-test.csv"
+```
+
+遇到问题：
+
+IndexError: Dimension out of range (expected to be in range of [-1, 0], but got 1)
+
+解决：按：https://github.com/facebookresearch/DPR/issues/213
+
+修改代码：顺利解决
+
+```Python
+# max_vector_len = max(q_t.size(1) for q_t in batch_tensors)
+# min_vector_len = min(q_t.size(1) for q_t in batch_tensors)
+max_vector_len = max(q_t.size(0) for q_t in batch_tensors)
+min_vector_len = min(q_t.size(0) for q_t in batch_tensors)
+```
+
+run code:
+
+
+```
+python dense_retriever.py
+```
+结果：
+
+![](assets/DPR运行笔记-7bccd49a.png)
+
+![](assets/DPR运行笔记-213e978d.png)
+
+找到了前 100 个匹配的 passage，由于数据集和 question 其实是对不上的，所以无法评估正确率。
+
+检索的参数具备 score，可以用于后续的 rerank。
+
+可以在 dense_retriever.yml 中设置检索的 passage 数量：
+
+![](assets/DPR运行笔记-bde54c26.png)
