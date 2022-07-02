@@ -566,6 +566,16 @@ nohup python \-u generate_embeddings.py
 
 nq_table：共 168989 个表格，编码约用3.5 h。（近17万个表）
 
+检索：
+
+dense_retrieval.py
+
+结果：
+
+![](assets/DPR运行笔记-aac3afb4.png)
+
+![](assets/DPR运行笔记-8190ad8b.png)
+
 **4. 如何将 wikisql_table 以平铺或 加分隔符的方式，载入 dpr embedding?**
 
 对wikisql 中 train/dev/test 中所有的表综合在一起，构建一个 wikisql_tables 集。
@@ -631,6 +641,8 @@ test:筛除 2543个问题
 
 ![](assets/DPR运行笔记-f6fa8115.png)
 
+
+
 最后保留下来的表格有 22319 个，共移除 4212个。
 
  4. 创建 dpr 的表格数据。分两种情况：直接平铺和有分隔符。
@@ -649,6 +661,168 @@ has_delimiters=True
 
 ![](assets/DPR运行笔记-3f5965f3.png)
 
-5. 生成 dpr 的 wikisql  训练数据形式的数据集
+将以上筛除后的表格载入 elasticsearch
 
-采用的策略是，neg:随机取60个 table，soft_hard_neg:检索 bm25 ，在top20 中随机取3个，pos:只有1个。 
+"data_preprocess/wikisql_tables_remove_out200_dpr_with_delimiter.jsonl"
+
+![](assets/DPR运行笔记-4aeedc1f.png)
+
+
+5. 生成 dpr 的 wikisql 训练数据形式的数据集
+
+采用的策略是，neg:随机取61个 table，soft_hard_neg:检索 bm25 ，在top20 中随机取2个，pos:只有1个。 （data_generate_traindata_dpr_out200.py）
+
+问题：检索的时候遇到：
+
+elastic_transport.ConnectionError: Connection error caused by: ConnectionError(Connection error caused by: ProtocolError(('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer'))))
+
+貌似是检索太频繁导致的？
+
+增加一个 sleep：
+```
+hard_neg_tables=get_tables(question,origin_table_id)
+if cnt%10==0:
+    print("cnt: ",cnt)
+    time.sleep(0.1)
+```
+
+elastic_transport.ConnectionError: Connection error caused by: ConnectionError(Connection error caused by: NewConnectionError(<urllib3.connection.HTTPConnection object at 0x7f67d216c750>: Failed to establish a new connection: [Errno 111] Connection refused))
+
+重启 es:
+```
+su esuser
+./bin/elasticsearch
+```
+
+生成结果：带/不带 delimiter 的 training/testing ，共4个文件，将其挪到 host4的 DPR 的 wikisql_data 文件夹中
+
+DPR/wikisql_data/wikisql_dpr_training_data_with_delimiter.json、/nlp_files/DPR/wikisql_data/wikisql_dpr_testing_data_with_delimiter.json
+
+6. 用 raw dpr 训练 embedding 生成 dpr 的 wikisql 训练数据形式的数据集
+
+问题：train 集的loss 下降， test 集的loss 上升？学习率也在上升。 eval 效果极差。
+
+![](assets/DPR运行笔记-db45511f.png)
+![](assets/DPR运行笔记-2f8d76fa.png)
+![](assets/DPR运行笔记-b37a7cee.png)
+
+询问师姐说是过拟合。
+
+后续将batch_size=1,调了 neg 的数量，训练集43334，测试集12048，平均loss=35.6,准确率 5/12048,效果极差
+
+![](assets/DPR运行笔记-8658b83b.png)
+
+neg 的数量作用在哪，感觉没有什么效果。
+
+在40000多的 trainset 间隔10个取了2000个问题的子集做训练，在test 上间隔10个取了200个子集做测评，再进一步降低了学习率。
+
+后续testloss 正常下降了，eval 的效果（猜测是64 中取1）也达到了 54%
+
+![](assets/DPR运行笔记-ca9a5844.png)
+
+继续降低学习率做训练，同时将 drop_out从 0.1 调到了0.2，max_length 从 256到512。显存需要增加，导致 batch_size=1 都跑不起了。将 conf/train/biencoder_local.yaml的other_negatives调到 20。一个epoch 需40min 训练, 5min 测试。20epoch 自动停止。loss 分别为：
+
+| epoch | train    | test     | test_acc            |
+| ----- | -------- | -------- | ------------------- |
+| 0     | 2.617569 | 2.219180 | 113/200 ~  0.565000 |
+| 1     | 1.258608 | 1.907552 | 126/200 ~  0.630000 |
+| 2     | 1.210599 | 1.711939 | **137/200 ~  0.685000 |
+| 3     | 1.280452 | 1.791353 | 132/200 ~  0.660000 |
+| 4     | 1.126368 | 1.906223 | 131/200 ~  0.655000 |
+| 5     | 1.113602 | 1.953571 | 127/200 ~  0.635000 |
+| 6     | 0.917539 | 2.063476 | 126/200 ~  0.630000 |
+| 7     | 0.948463 | 2.347768 | 124/200 ~  0.620000 |
+| 8     | 0.937369 | 2.728052 | 115/200 ~  0.575000 |
+| 9     | 0.601034 | 3.316344 | 107/200 ~  0.535000 |
+| 10    | 0.658453 | 4.087913 | 99/200 ~  0.495000  |
+| ...   | ...      | ...      | ...                 |
+| 19    | 0.489357 | 7.573456 | 82/200 ~  0.410000  |
+
+典型的再往后就是越过拟合。后续两个方案：1. 调 drop_out，再试（0.2->0.1,0.2->0.3）2. 增大训练数据集的数据量（2000->4000，2000->6000）
+
+将drop_out 从0.2->0.1
+
+7. 对比 bm25 在 wikisql_tables 集，不用EG（纯 bm25）和用 EG 筛选后的效果
+
+test集，用纯bm25的检索效果：
+bm25_res: k1= 1.2 , b= 0.75 , top_k= 1 ,count= 4595 , hit_accuracy= 0.38113802256138024
+bm25_res: k1= 1.2 , b= 0.75 , top_k= 5 ,count= 7300 , hit_accuracy= 0.6055076310550763
+bm25_res: k1= 1.2 , b= 0.75 , top_k= 10 ,count= 8279 , hit_accuracy= 0.6867120106171201
+bm25_res: k1= 1.2 , b= 0.75 , top_k= 20 ,count= 9225 , hit_accuracy= 0.7651791639017916
+bm25_res: k1= 1.2 , b= 0.75 , top_k= 50 ,count= 10404 , hit_accuracy= 0.8629727936297279
+bm25_res: k1= 1.2 , b= 0.75 , top_k= 100 ,count= 11235 , hit_accuracy= 0.9319011280690113
+bm25_res: k1= 1.2 , b= 0.75 , top_k= 200 ,count= 11788 , hit_accuracy= 0.977770404777704
+hit200理论上是应该 100%，但没有达到，是因为排除out_200的问题后又筛选了一遍表格，对结果造成了影响。
+不过问题应该不大。后续也不准备再更新表格。
+
+然后选一个在 test 集上效果较好的HydraNet模型，在模型的代码中改成用 cpu 做预测（显存tyh在用）
+```Python
+class HydraTorch(BaseModel):
+    def __init__(self, config):
+        self.config = config
+        self.model = HydraNet(config)
+        if torch.cuda.device_count() > 1:
+            self.model = nn.DataParallel(self.model)
+        # self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu")
+```
+
+在 data_preprocess/wikitest_out200.jsonl 上运行：
+
+候选1 /nlp_files/HydraNet-WikiSQL/output/20220630_033334/model_1.pt dev 82.9 ，wikitest_out100.jsonl 83.8
+===HydraNet===
+sel_acc: 0.976692103516921
+agg_acc: 0.9265925680159257
+wcn_acc: 0.9774386197743862
+wcc_acc: 0.9418546781685467
+wco_acc: 0.9716323822163239
+wcv_acc: 0.9472461844724619
+
+===HydraNet+EG===
+sel_acc: 0.976692103516921
+agg_acc: 0.9265925680159257
+wcn_acc: 0.9810053085600531
+wcc_acc: 0.9703881884538819
+wco_acc: 0.9759455872594559
+wcv_acc: 0.9732913072329131
+
+无EG:
+{
+  "ex_accuracy": 0.8809721300597213,
+  "lf_accuracy": 0.8340245520902455
+}
+
++EG：
+{
+  "ex_accuracy": 0.9273390842733908,
+  "lf_accuracy": 0.8752488387524884
+}
+候选2 /nlp_files/HydraNet-WikiSQL/output/20220628_022212/model_2.pt
+===HydraNet===
+sel_acc: 0.9747013934970139
+agg_acc: 0.9197080291970803
+wcn_acc: 0.9752820172528202
+wcc_acc: 0.9391174518911746
+wco_acc: 0.9692269409422694
+wcv_acc: 0.9477438619774387
+
+===HydraNet+EG===
+sel_acc: 0.9747013934970139
+agg_acc: 0.9197080291970803
+wcn_acc: 0.9800099535500996
+wcc_acc: 0.9698075646980756
+wco_acc: 0.9742037159920371
+wcv_acc: 0.9724618447246185
+
+无 EG
+{
+  "ex_accuracy": 0.8779031187790312,
+  "lf_accuracy": 0.8283012607830126
+}
++EG
+{
+  "ex_accuracy": 0.9215328467153284,
+  "lf_accuracy": 0.8673689449236894
+}
+
+降低学习率继续训练 hydraNet.
