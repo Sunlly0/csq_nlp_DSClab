@@ -726,7 +726,7 @@ neg 的数量作用在哪，感觉没有什么效果。
 | ----- | -------- | -------- | ------------------- |
 | 0     | 2.617569 | 2.219180 | 113/200 ~  0.565000 |
 | 1     | 1.258608 | 1.907552 | 126/200 ~  0.630000 |
-| 2     | 1.210599 | 1.711939 | **137/200 ~  0.685000 |
+| 2     | 1.210599 | 1.711939 | **137/200 ~  0.685000 **|
 | 3     | 1.280452 | 1.791353 | 132/200 ~  0.660000 |
 | 4     | 1.126368 | 1.906223 | 131/200 ~  0.655000 |
 | 5     | 1.113602 | 1.953571 | 127/200 ~  0.635000 |
@@ -738,11 +738,21 @@ neg 的数量作用在哪，感觉没有什么效果。
 | ...   | ...      | ...      | ...                 |
 | 19    | 0.489357 | 7.573456 | 82/200 ~  0.410000  |
 
+
+learning_rate: 5.0e-07
+最好模型为：outputs/2022-07-01/13-09-01/test_wikisql_20220701/dpr_biencoder.2
+
 典型的再往后就是越过拟合。后续两个方案：1. 调 drop_out，再试（0.2->0.1,0.2->0.3）2. 增大训练数据集的数据量（2000->4000，2000->6000）
 
-将drop_out 从0.2->0.1
+用2000样本将drop_out 从0.2->0.1,  learning_rate: 5.0e-07, 最高 62%，后续测试集上性能下降。总体效果没有原来好。
 
-7. 对比 bm25 在 wikisql_tables 集，不用EG（纯 bm25）和用 EG 筛选后的效果
+用2000样本 drop_out=0.3 训练，  learning_rate: 5.0e-07。train loss=1.2+ ,test loss=2.187767，epoch 1结束 时准确率60%。后续暂停了训练。
+
+用8000 样本，drop_out=0.2， learning_rate: 4.0e-07，  eval_per_epoch: 4（每隔2000样本测试1次。）  other_negatives: 20。epoch 刚一半时效果最高：NLL Validation: loss = 1.679720. correct prediction ratio  123/200 ~  0.615000。后续准确率极速下降。
+
+用40000训练样本+500测试样本做训练，调learning_rate: 3.0e-07，gradient_accumulation_steps: 8，dropout: 0.2，目前epoch1 中的最好效果 311/500 ~  0.622000， 再往后性能下降。感觉学习率有点低。
+
+**7. 对比 bm25 在 wikisql_tables 集，不用EG（纯 bm25）和用 EG 筛选后的效果**
 
 test集，用纯bm25的检索效果：
 bm25_res: k1= 1.2 , b= 0.75 , top_k= 1 ,count= 4595 , hit_accuracy= 0.38113802256138024
@@ -825,4 +835,75 @@ wcv_acc: 0.9724618447246185
   "lf_accuracy": 0.8673689449236894
 }
 
-降低学习率继续训练 hydraNet.
+落后于 候选1
+
+降低学习率继续训练 hydraNet.候选3：learning_rate	6e-6.无EG，
+
+/nlp_files/HydraNet-WikiSQL/output/20220702_083211/model_2.pt
+
+[wikidev.jsonl, epoch 2] overall:83.5, agg:91.2, sel:97.8, wn:98.7, wc:95.8, op:99.1, val:97.4
+[wikitest_out200.jsonl, epoch 2] overall:83.8, agg:92.5, sel:97.6, wn:98.0, wc:94.7, op:99.4, val:96.8
+
+===HydraNet===
+sel_acc: 0.9757796947577969
+agg_acc: 0.9250995355009953
+wcn_acc: 0.9796781685467817
+wcc_acc: 0.946914399469144
+wco_acc: 0.9732913072329131
+wcv_acc: 0.9526376907763769
+
+===HydraNet+EG===
+sel_acc: 0.9757796947577969
+agg_acc: 0.9250995355009953
+wcn_acc: 0.9816688785666888
+wcc_acc: 0.9718812209688122
+wco_acc: 0.9762773722627737
+wcv_acc: 0.9742866622428666
+
+{
+  "ex_accuracy": 0.8868613138686131,
+  "lf_accuracy": 0.8386695421366954
+}
+
+{
+  "ex_accuracy": 0.9273390842733908,
+  "lf_accuracy": 0.8753317850033179
+}
+
+总体来说候选3的效果全胜候选1，是目前效果最好的模型
+
+接下来，用该模型作为检索阶段的 EG 在bm25 算法检索的基础上做评估。
+
+```
+cp -r output/20220702_083211 ../hydranet/output
+```
+
+修改代码，在bm25 检索出200个 hits 的基础上，用hydranet 转SQL 后执行。计算检索效果的指标.(/nlp_files/hydranet/wikisql_elastic_bm25_and_hydranet_predict_final_tables.py)
+
+res_top_k=[1,5,10,20,50,100]，有EG/无EG。对于有EG ，根据执行结果重新排序hits得到candidate_hits。
+```
+def rerank_hits(exe_res,hits,k):
+将 exe_res=True 的筛选出来作为 candidate_hits，
+如果不够 k 个，再按exe_res=False 中 的score 从高到低取，直到满k 个。
+```
+对于检索出的表 id，分train/dev/test 三种情况在不同的 db 上执行。将检索结果写在test_retrieve_final_table_bm25.jsonl.（用于后续测试end-to-end 的 lf 和 ex）
+
+结果：
+3210的时候：
+no_EG: num: 3210 ,top_k: 1 count: 1306 accuracy: 0.40685358255451715
+no_EG: num: 3210 ,top_k: 5 count: 2008 accuracy: 0.6255451713395639
+no_EG: num: 3210 ,top_k: 10 count: 2290 accuracy: 0.7133956386292835
+no_EG: num: 3210 ,top_k: 20 count: 2538 accuracy: 0.7906542056074767
+no_EG: num: 3210 ,top_k: 50 count: 2834 accuracy: 0.8828660436137071
+no_EG: num: 3210 ,top_k: 100 count: 3031 accuracy: 0.9442367601246106
+
+with_WG: num: 3210 ,top_k: 1 count: 1824 accuracy: 0.5682242990654206
+with_WG: num: 3210 ,top_k: 5 count: 2574 accuracy: 0.8018691588785046
+with_WG: num: 3210 ,top_k: 10 count: 2776 accuracy: 0.864797507788162
+with_WG: num: 3210 ,top_k: 20 count: 2922 accuracy: 0.9102803738317757
+with_WG: num: 3210 ,top_k: 50 count: 3060 accuracy: 0.9532710280373832
+with_WG: num: 3210 ,top_k: 100 count: 3131 accuracy: 0.9753894080996884
+
+可以看出 hit@1 提升 16%，hit@5 提升 18%，hit@10提升 7%，提升幅度较大。
+
+后续再3246个例子的时候出现bug，断掉了。改好 bug 之后接着跑，但是 result 没了。 后面需要倒回来重新跑一下。
