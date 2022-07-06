@@ -752,6 +752,13 @@ learning_rate: 5.0e-07
 
 用40000训练样本+500测试样本做训练，调learning_rate: 3.0e-07，gradient_accumulation_steps: 8，dropout: 0.2，目前epoch1 中的最好效果 311/500 ~  0.622000， 再往后性能下降。感觉学习率有点低。
 
+2022.7.6
+
+尝试了多次，模型及其容易过拟合。通过加载检查点的训练，最高 test acc=71%。发现当降低 other_negatives 的数量从 20->10 的时候效果好，说明模型可能不擅长分类 other_neg 样本。
+
+通过分析可能是数据集的问题，重新生成hard_neg=1 other_neg=20 的例子，取 train=3000，test=500,在之前的检查点上重新做训练。
+
+还有一个原因，可能是 问题的cfg.max_length太长了，导致模型过拟合。
 **7. 对比 bm25 在 wikisql_tables 集，不用EG（纯 bm25）和用 EG 筛选后的效果**
 
 test集，用纯bm25的检索效果：

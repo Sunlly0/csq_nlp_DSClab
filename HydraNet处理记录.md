@@ -267,6 +267,9 @@ else:
 | hit     | 6766  | 6217                 |
 | not_hit | 6459  | 4837                 |
 
+excute_error_count:hit(549),not_hit(1622)2171
+74.942422%的执行出错的表是检索错误的表。 
+
 not_hit 的 correct 增长了许多，excute_correct_count/count =74.89%
 
 ### 5. 基于bm25 的 Retrieve-predict-excute top5 实现：用bm25 找分数最高的前 100 个表，并做预测，将 res中的False 情况去掉，取前 top5,看 retrive_acc
