@@ -759,6 +759,179 @@ learning_rate: 5.0e-07
 通过分析可能是数据集的问题，重新生成hard_neg=1 other_neg=20 的例子，取 train=3000，test=500,在之前的检查点上重新做训练。
 
 还有一个原因，可能是 问题的cfg.max_length太长了，导致模型过拟合。
+
+**5. wikisql_table embedding 并做检索得到结果，对检索结果进行评估。**
+
+embedding:
+
+修改 default_sources.yaml:
+```
+dpr_wikisql:
+  _target_: dpr.data.retriever_data.JsonlWikiSQLCtxSrc
+  file: "/nlp_files/DPR/wikisql_data/wikisql_tables_remove_out200_dpr_with_delimiter.jsonl"
+```
+
+修改 dpr/data/retriever_data.py，自己写了一个加载数据的类，借用BiEncoderPassage,用 column_meta 当做其的 title 项。
+
+```python
+# by Sunlly
+class JsonlWikiSQLCtxSrc(RetrieverData):
+    def __init__(
+        self,
+        file: str,
+        # id_col: int = 0,
+        # text_col: int = 1,
+        # meta_col: int = 2,
+        id_col: str = "id",
+        text_col: str = "content",
+        meta_col: str = "column_meta",
+        id_prefix: str = None,
+        normalize: bool = False,
+    ):
+        super().__init__(file)
+        self.text_col = text_col
+        self.meta_col = meta_col
+        self.id_col = id_col
+        self.id_prefix = id_prefix
+        self.normalize = normalize
+
+    def load_data_to(self, ctxs: Dict[object, BiEncoderPassage]):
+        super().load_data()
+        logger.info("Reading file %s", self.file)
+        with jsonlines.open(self.file) as r:
+            for row in r:
+                sample_id = row[self.id_col]
+                passage = row[self.text_col].strip('"')
+                ctxs[sample_id] = BiEncoderPassage(passage, row[self.meta_col])
+```
+修改 generate_embedding.py 使title 项（实际上的 column_meta）不加载入embedding
+
+```Python
+def gen_ctx_vectors:
+    # batch_token_tensors = [
+    #     tensorizer.text_to_tensor(ctx[1].text, title=ctx[1].title if insert_title else None) for ctx in batch
+    # ]
+    # by Sunlly dont load column_meta
+    batch_token_tensors = [
+        tensorizer.text_to_tensor(ctx[1].text, title="" if insert_title else None) for ctx in batch
+    ]
+```
+
+修改 config，运行generate_dense_embeddings.py
+```Python
+# end_idx = start_idx + shard_size
+# by Sunlly
+end_idx=start_idx +200
+```
+```Python
+def main(cfg: DictConfig):
+    cfg.model_file="/nlp_files/DPR/outputs/2022-07-06/02-17-21/test_wikisql_20220706/dpr_biencoder.3"
+    cfg.ctx_src="dpr_wikisql"
+    cfg.out_file="/nlp_files/DPR/embeddings/wikisql_tables"
+```
+取前 200 个生成 embedding:
+
+结果：
+![](assets/DPR运行笔记-385ed2d8.png)
+
+运行dense_retriever.py,暂时先用的 nq_test 作为 QA：
+```python
+cfg.model_file="/nlp_files/DPR/outputs/2022-07-06/02-17-21/test_wikisql_20220706/dpr_biencoder.3"
+cfg.qa_dataset="nq_test"  
+cfg.ctx_datatsets=["dpr_wikisql"] ## need [] is a dict   in default_sources.yaml
+cfg.encoded_ctx_files=["/nlp_files/DPR/embeddings/wikisql_tables_0"] ## need [] is a dict
+cfg.out_file="/nlp_files/DPR/wikisql_retriever_validation"
+```
+结果：![](assets/DPR运行笔记-8a8075a2.png)
+```
+[
+    {
+        "question": "who got the first nobel prize in physics",
+        "answers": [
+            "Wilhelm Conrad R\u00f6ntgen"
+        ],
+        "ctxs": [
+            {
+                "id": "train_1-10236830-4",
+                "title": [
+                    [
+                        "Nomination",
+                        "string",
+                        null
+                    ],
+                    [
+                        "Actors Name",
+                        "string",
+                        null
+                    ],
+                    [
+                        "Film Name",
+                        "string",
+                        null
+                    ],
+                    [
+                        "Director",
+                        "string",
+                        null
+                    ],
+                    [
+                        "Country",
+                        "string",
+                        null
+                    ]
+                ],
+                "text": "StozharyNomination, Actors Name, Film Name, Director, Country. Best Actor in a Leading Role, Yuriy Dubrovin, Okraina, Pyotr Lutsik, Ukraine. Best Actor in a Leading Role, Zurab Begalishvili, Zdes Rassvet, Zaza Urushadze, Georgia. Best Actress in a Leading Role, Galina Bokashevskaya, Totalitarian Romance, Vyacheslav Sorokin, Russia. Best Actor in a Supporting Role, Vsevolod Shilovskiy, Barhanov and his Bodyguard, Valeriy Lanskoy, Russia. Best Actor in a Supporting Role, Dragan Nikoli\u0107, Barrel of Gunpowder, Goran Paskaljevic, Serbia. Best Actress in a Supporting Role, Zora Manojlovic, Rane, Srdjan Dragojevic, Serbia. Best Debut, Agnieszka W\u0142odarczyk, Sara, Maciej \u015alesicki, Poland. ",
+                "score": "78.355064",
+                "has_answer": false
+            },
+            {...},
+            ...
+          }
+        }
+]
+```
+符合需求。接下来，生成完整的 embeddings:
+![](assets/DPR运行笔记-165b9888.png)
+
+修改 QA:
+```
+wikisql_test:
+  _target_: dpr.data.retriever_data.JsonlWikiSQLQASrc
+  file: "/nlp_files/DPR/wikisql_data/test_remove_out200_table_in_total_tables.jsonl"
+```
+修改 retriever_data.py
+```Python
+# by Sunlly
+class JsonlWikiSQLQASrc(QASrc):
+    def __init__(
+        self,
+        file: str,
+        selector: DictConfig = None,
+        question_attr: str = "question",
+        answers_attr: str = "sql",
+        id_attr: str = "table_id",
+        special_query_token: str = None,
+        query_special_suffix: str = None,
+    ):
+        super().__init__(file, selector, special_query_token, query_special_suffix)
+        self.question_attr = question_attr
+        self.answers_attr = answers_attr
+        self.id_attr = id_attr
+
+    def load_data(self):
+        super().load_data()
+        data = []
+        with jsonlines.open(self.file, mode="r") as jsonl_reader:
+            for jline in jsonl_reader:
+                question = jline[self.question_attr]
+                answers = jline[self.answers_attr] if self.answers_attr in jline else []
+                id = None
+                if self.id_attr in jline:
+                    id = jline[self.id_attr]
+                data.append(QASample(self._process_question(question), id, answers))
+        self.data = data
+```
+
 **7. 对比 bm25 在 wikisql_tables 集，不用EG（纯 bm25）和用 EG 筛选后的效果**
 
 test集，用纯bm25的检索效果：
