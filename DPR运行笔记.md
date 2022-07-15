@@ -611,7 +611,7 @@ for  循环读取三个 pharse（）拼接 page_title(如果有) /header/ rows�
  ```
  导入成功。
 
- 3. 基于剔除执行结果为空的 train/dev/test 的 question， 剔除三个数据集中 bm25 top100(数字值得商榷)的question 和table。
+ **3. 基于剔除执行结果为空的 train/dev/test 的 question， 剔除三个数据集中 bm25 top100(数字值得商榷)的question 和table。**
 
 修改 wikisql_elastic_python_test_remove_out100_tables.py
 ,**top_k 设置成 200**，bm25 为默认参数值，增加 phase 并运行（hisresult 增加 phase），结果：
@@ -932,6 +932,77 @@ class JsonlWikiSQLQASrc(QASrc):
         self.data = data
 ```
 
+期间修改了一下代码，使json不要换行：
+```Python
+def save_results:
+    with open(out_file, "w") as writer:
+        ## by Sunlly, for not 换行
+        writer.write(json.dumps(merged_data))
+        # writer.write(json.dumps(merged_data, indent=4) + "\n")
+    logger.info("Saved results * scores  to %s", out_file)
+```
+
+
+得到结果：![](assets/DPR运行笔记-ca4f9a5e.png)
+
+官方没有专门针对 retriever 的评估，自己写了一个评估代码：
+/nlp_files/DPR/wikisql_pdr_evaluate.py
+
+结果很不理想，远远没有基线高：
+
+![](assets/DPR运行笔记-6154620b.png)
+
+（就像一个学渣平时学的不好，考试前担心自己挂科，拼命复习抱佛脚，结果考完试成绩出来发现果然挂科了的感觉。）
+
+和师姐交流后决定修改 loss，对于20个 other_neg 将原来的 e^{sim(q,p^-)}扩大三倍，差不多相当于60个 other_neg，
+
+```Python
+class BiEncoderNllLoss(object):
+    def calc:
+        scores = self.get_scores(q_vectors, ctx_vectors)
+        # by Sunlly to expand the effect of other_neg
+        n=scores.shape[1]
+        # print(n)
+        neg_time_tensor=torch.zeros(1,n)
+        for i in range(n):
+            if i>=2:
+                neg_time_tensor[0][i]=neg_score_times
+        neg_time_tensor_gpu=neg_time_tensor.to(device='cuda')
+        scores=scores+neg_time_tensor_gpu
+        print(scores)
+        ##
+```
+
+然后将grad_accumulation 设置为32，lr_rate 设置为1e-5，drapout 设置为1.5，重新训练。 尽量向论文的超参数接近。训练的比较慢，由于loss累积， 现在的loss 相当于原来loss 的 loss/32，
+
+增加保存最好检查点：
+```Python
+## by Sunlly save best checkpoint
+def _save_checkpoint(self, scheduler, epoch: int, offset: int, best_checkpoint=False) -> str:
+    cfg = self.cfg
+    model_to_save = get_model_obj(self.biencoder)
+    cp = os.path.join(cfg.output_dir, cfg.checkpoint_file_name + "." + str(epoch))
+    ## by Sunlly save best checkpoint
+    if best_checkpoint:
+        cp = os.path.join(cfg.output_dir, cfg.checkpoint_file_name + "." + str(epoch)+"best")
+##
+
+def validate_and_save(self, epoch: int, iteration: int, scheduler):
+  if validation_loss<0.5:
+      best_cp_name = self._save_checkpoint(scheduler, epoch, iteration,best_checkpoint=True)
+      logger.info("Save New Best validation checkpoint %s", best_cp_name)
+```
+
+周末跑了两天，没有什么进展。
+
+怀疑可能是表格长度差异太大了，导致模型学习效果不好。
+
+对train 的问题做了筛选，gap=5 取sample，基本保证一个表对应一个问题，然后将设other_neg=60，length=150，过长的给截断，基本能保证各sample 的table 长度一致。
+
+又将loss 给改回来，从ln(3)到ln(1)。
+
+继续训练。这半个月基本可以说是没有进展，心情焦灼，挫败感十足，感觉要 emo了。
+
 **7. 对比 bm25 在 wikisql_tables 集，不用EG（纯 bm25）和用 EG 筛选后的效果**
 
 test集，用纯bm25的检索效果：
@@ -1087,3 +1158,198 @@ with_WG: num: 3210 ,top_k: 100 count: 3131 accuracy: 0.9753894080996884
 可以看出 hit@1 提升 16%，hit@5 提升 18%，hit@10提升 7%，提升幅度较大。
 
 后续再3246个例子的时候出现bug，断掉了。改好 bug 之后接着跑，但是 result 没了。 后面需要倒回来重新跑一下。
+
+
+前 3246 （0-3245）
+no_EG: num: 12056 ,top_k: 1 count: 1317 accuracy: 0.10924021234240212
+no_EG: num: 12056 ,top_k: 5 count: 2027 accuracy: 0.1681320504313205
+no_EG: num: 12056 ,top_k: 10 count: 2309 accuracy: 0.19152289316522894
+no_EG: num: 12056 ,top_k: 20 count: 2559 accuracy: 0.21225945587259457
+no_EG: num: 12056 ,top_k: 50 count: 2867 accuracy: 0.23780690112806901
+no_EG: num: 12056 ,top_k: 100 count: 3067 accuracy: 0.25439615129396154
+with_WG: num: 12056 ,top_k: 1 count: 1843 accuracy: 0.1528699402786994
+with_WG: num: 12056 ,top_k: 5 count: 2605 accuracy: 0.21607498341074982
+with_WG: num: 12056 ,top_k: 10 count: 2808 accuracy: 0.23291307232913072
+with_WG: num: 12056 ,top_k: 20 count: 2955 accuracy: 0.2451061712010617
+with_WG: num: 12056 ,top_k: 50 count: 3094 accuracy: 0.256635700066357
+with_WG: num: 12056 ,top_k: 100 count: 3167 accuracy: 0.26269077637690774
+
+3246 之后(3246-12056)
+no_EG: num: 12056 ,top_k: 1 count: 3278 accuracy: 0.2718978102189781
+no_EG: num: 12056 ,top_k: 5 count: 5273 accuracy: 0.4373755806237558
+no_EG: num: 12056 ,top_k: 10 count: 5970 accuracy: 0.49518911745189115
+no_EG: num: 12056 ,top_k: 20 count: 6666 accuracy: 0.5529197080291971
+no_EG: num: 12056 ,top_k: 50 count: 7537 accuracy: 0.6251658925016589
+no_EG: num: 12056 ,top_k: 100 count: 8168 accuracy: 0.6775049767750497
+with_WG: num: 12056 ,top_k: 1 count: 5040 accuracy: 0.418049104180491
+with_WG: num: 12056 ,top_k: 5 count: 7038 accuracy: 0.5837757133377571
+with_WG: num: 12056 ,top_k: 10 count: 7584 accuracy: 0.6290643662906437
+with_WG: num: 12056 ,top_k: 20 count: 7993 accuracy: 0.6629893828798938
+with_WG: num: 12056 ,top_k: 50 count: 8384 accuracy: 0.6954213669542136
+with_WG: num: 12056 ,top_k: 100 count: 8515 accuracy: 0.7062873258128732
+
+**总的结果：**
+
+no_EG: num: 12056 ,top_k: 1 count: 4595 accuracy: 0.381138022
+no_EG: num: 12056 ,top_k: 5 count: 7300 accuracy: 0.6055076310
+no_EG: num: 12056 ,top_k: 10 count: 8279 accuracy: 0.6867120106
+no_EG: num: 12056 ,top_k: 20 count: 9225 accuracy: 0.765179163
+no_EG: num: 12056 ,top_k: 50 count: 10404 accuracy: 0.8629727936297279
+no_EG: num: 12056 ,top_k: 100 count: 11235 accuracy: 0.931901128
+
+with_WG: num: 12056 ,top_k: 1 count: 6883 accuracy: 0.570919044459
+with_WG: num: 12056 ,top_k: 5 count: 9643 accuracy: 0.7998506967
+with_WG: num: 12056 ,top_k: 10 count: 10392 accuracy: 0.8619774386
+with_WG: num: 12056 ,top_k: 20 count: 10948 accuracy: 0.90809555408
+with_WG: num: 12056 ,top_k: 50 count: 11478 accuracy: 0.952057067
+with_WG: num: 12056 ,top_k: 100 count: 11682 accuracy: 0.968978102
+
+
+**8.由于dpr 训练效果不好，并且和数据集有很大的关系，准备重新洗一遍wikisql数据集**
+
+创建一个content 由 header
+
+用minhash算法筛除相似度 0.91 以上的表格（wikisql_table_sim.py），剩余 13254 个表（wikisql_tables_process_head_sim_out_0.9.jsonl）
+
+
+![](assets/DPR运行笔记-a1de62d9.png)
+
+
+用 筛除了不能执行和执行结果为空的问题集（train/dev/test），筛除表格（wikisql_remove_tables_none_answer.py），剩 12392个表。
+
+用新的表格（wikisql_tables_process_head_sim_out_0.9_without_none_answer.jsonl）
+筛除对应的问题集。(wikisql_remove_question_not_in_filted_tables.py)
+结果
+train 29624
+dev 3236
+test 5924
+
+共：38784个问题
+
+目前先跑第一版的模型，即没有重新划分数据集和去语境化。
+
+先生成bm25 的数据(/nlp_files/hydranet/table_process_total_process_bm25.py)，并载入 index=wikisql_tables_out_sim.（upload_table_data_test.py）
+
+空间满了，无法创建新的es index，删除了不必要的文件和 git 仓库： rm -rf .git
+
+
+生成 dpr 的初始数据集，增加分隔符。（table_process_total_process_dpr.py），生成训练和测试所需要的数据que+hard_neg1+neg60
+
+训练，batch_size=2，accumulate__loss=64，other neg=60.max_length=150
+
+
+效果一般，测试集最高 54%.
+
+去语境化：
+1.用具体的名次替换代词/名词短语(he definite NP “the copper statue” with “The Statue of Liberty”, or the abbreviated name “Meg” with “Megan “Meg” Griffin”.) 40%
+2.略缩词或名词的扩展
+3.删除只能在上下文中才能理解的话语标记（therefore） 3%
+4.在名词短语中添加修饰语（in XXX）
+5.增加修饰整个句子的短语（at xxx）
+6.添加有助于显著提高可读性的背景信息(“The Eagles” with “The American rock band The Eagles.”) 10%
+
+试了一下，手工去语境化太麻烦了，一个下午能处理100个表格就不错了，但一共有10000多张表
+
+
+自动去语境化（do_decontext_by_auto.py）
+将question 和table 的head_conten(page-title+section_title+header)转换成 minhash 向量，对于相似度小于 60% 的question ，增加 “in page_title” 的描述。
+
+同时删除所有的没有 page_title的表格和对应的问题。
+
+共 36243个问题（data_preprocess/train_without_none_answer_0.9_sim_decontext_auto.jsonl）(dev/test)
+
+按 8:1:1.5 的比例划分 train  dev test:[27613,3451,5179](new_ques_id_and_re_divide_dataset.py)
+
+11715张表
+
+
+重新处理，流程与上面类似，创建新的 dpr 训练数据集
+
+生成 bm25 的时候，去除 page_title，只保留模式信息和content，保证（--）基线的准确率。
+index= wikisql-tables_re_divide
+
+结果很理想，用前10000个train 问题和 300个测试集做训练时的评估，效果最高能达到 94.44%
+,检索准确率：
+
+![](assets/DPR运行笔记-c3f7f43a.png)
+
+感觉挺高的，继续用全部的训练集做训练（29624），用    cfg.model_file="/nlp_files/DPR/outputs/2022-07-14/08-30-34/test_wikisql_20220714/dpr_biencoder.6" 评估：
+
+![](assets/DPR运行笔记-daf6fca8.png)
+
+接下来用 length=200 做评估， batch_size=30，训练 25轮。
+
+------index: 5178 --------
+top_ 1 _hit: True, index= 0
+top_ 5 _hit: True, index= 0
+top_ 10 _hit: True, index= 0
+top_ 20 _hit: True, index= 0
+top_ 50 _hit: True, index= 0
+top_ 100 _hit: True, index= 0
+top_1_hit: 3714 accuracy= 0.7171268584668855
+top_5_hit: 4543 accuracy= 0.8771963699555899
+top_10_hit: 4709 accuracy= 0.9092488897470554
+top_20_hit: 4847 accuracy= 0.9358949604170689
+top_50_hit: 4983 accuracy= 0.9621548561498359
+top_100_hit: 5067 accuracy= 0.9783742035141919
+
+同时跑bm25，看test 评估的效果
+
+----- 5178 , 2022:07:15 01:42:39 ------------
+question: Which city is Naples Airport located in in Blue Air destinations?
+ loaded. Data shapes:
+input_ids (1166, 96)
+input_mask (1166, 96)
+segment_ids (1166, 96)
+===HydraNet===
+model prediction start
+model prediction end, time elapse: 6.335601568222046
+error_execute_count: 3
+before_EG:  hit top_k 5 count: 4
+after_EG:  hit top_k 5 count: 4
+before_EG:  hit top_k 10 count: 4
+after_EG:  hit top_k 10 count: 4
+before_EG:  hit top_k 20 count: 4
+after_EG:  hit top_k 20 count: 4
+before_EG:  hit top_k 50 count: 4
+after_EG:  hit top_k 50 count: 4
+before_EG:  hit top_k 100 count: 4
+after_EG:  hit top_k 100 count: 4
+before_EG:  hit top_k 200 count: 4
+after_EG:  hit top_k 200 count: 4
+***********************************
+no_EG: num: 5179 ,top_k: 1 count: 2223 accuracy: 0.42923344274956554
+no_EG: num: 5179 ,top_k: 5 count: 3139 accuracy: 0.6061015640084958
+no_EG: num: 5179 ,top_k: 10 count: 3456 accuracy: 0.6673102915620777
+no_EG: num: 5179 ,top_k: 20 count: 3741 accuracy: 0.7223402201197142
+no_EG: num: 5179 ,top_k: 50 count: 4133 accuracy: 0.7980305078200425
+no_EG: num: 5179 ,top_k: 100 count: 4432 accuracy: 0.8557636609384051
+no_EG: num: 5179 ,top_k: 200 count: 4682 accuracy: 0.9040355280942267
+with_WG: num: 5179 ,top_k: 1 count: 2607 accuracy: 0.5033790307009075
+with_WG: num: 5179 ,top_k: 5 count: 3512 accuracy: 0.6781231898049817
+with_WG: num: 5179 ,top_k: 10 count: 3796 accuracy: 0.732960030893995
+with_WG: num: 5179 ,top_k: 20 count: 4017 accuracy: 0.7756323614597412
+with_WG: num: 5179 ,top_k: 50 count: 4324 accuracy: 0.8349102143270901
+with_WG: num: 5179 ,top_k: 100 count: 4513 accuracy: 0.8714037458968913
+with_WG: num: 5179 ,top_k: 200 count: 4682 accuracy: 0.9040355280942267
+
+重新训练的HydraNet模型（0.56）
+
+0.82
+
+跑加了 title 的效果:
+
+
+
+重新洗了一般 question，sim<=0.56，用还没训练完的dpr模型评估test：
+------index: 5178 --------
+top_ 20 _hit: True, index= 18
+top_ 50 _hit: True, index= 18
+top_ 100 _hit: True, index= 18
+top_1_hit: 2603 accuracy= 0.5026066808264144
+top_5_hit: 3828 accuracy= 0.7391388298899402
+top_10_hit: 4192 accuracy= 0.8094226684688164
+top_20_hit: 4502 accuracy= 0.8692797837420352
+top_50_hit: 4837 accuracy= 0.9339640857308361
+top_100_hit: 4989 accuracy= 0.9633133809615756
+total=5178
