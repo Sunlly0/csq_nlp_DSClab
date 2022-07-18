@@ -1333,23 +1333,71 @@ with_WG: num: 5179 ,top_k: 50 count: 4324 accuracy: 0.8349102143270901
 with_WG: num: 5179 ,top_k: 100 count: 4513 accuracy: 0.8714037458968913
 with_WG: num: 5179 ,top_k: 200 count: 4682 accuracy: 0.9040355280942267
 
+
+**9.最后的结果，wikisql_re_divide_0.56**
+
+重新洗了一般 question，sim<=0.56，用训练完的dpr模型评估test：
+
+训练好后：
+
+![](assets/DPR运行笔记-c0855a0a.png)
+
+ps: 该图作废，除数少算了1！！！
+
 重新训练的HydraNet模型（0.56）
 
-0.82
+hydraNet训练后
 
-跑加了 title 的效果:
+Model saved in path: output/20220715_065141/model_2.pt
+output/20220715_065141_cases
+model prediction start
+model prediction end, time elapse: 118.74542093276978
+wikidev_re_divide_0.56.jsonl: overall:84.3, agg:93.5, sel:98.1, wn:97.8, wc:94.6, op:99.3, val:96.2
+model prediction start
+model prediction end, time elapse: 179.55445551872253
+wikitest_re_divide_0.56.jsonl: overall:83.8, agg:92.9, sel:97.8, wn:97.9, wc:94.7, op:99.5, val:96.0
+
+训练后的hydranet，在 test_re_divide 0.56 上做测评
+100%|████████████████████████████████████████████████████████████████████████████████| 5179/5179 [00:31<00:00, 163.73it/s]
+{
+  "ex_accuracy": 0.8882023556671172,
+  "lf_accuracy": 0.8391581386368024
+}
+
+bm25
+
+跑加了 title 的效果（未全，到1540 就断了）
+
+no_EG: num: 1540 ,top_k: 1 count: 951 accuracy: 0.6175324675324675
+no_EG: num: 1540 ,top_k: 5 count: 1207 accuracy: 0.7837662337662338
+no_EG: num: 1540 ,top_k: 10 count: 1287 accuracy: 0.8357142857142857
+no_EG: num: 1540 ,top_k: 20 count: 1359 accuracy: 0.8824675324675325
+no_EG: num: 1540 ,top_k: 50 count: 1424 accuracy: 0.9246753246753247
+no_EG: num: 1540 ,top_k: 100 count: 1468 accuracy: 0.9532467532467532
+no_EG: num: 1540 ,top_k: 200 count: 1503 accuracy: 0.9759740259740259
+with_WG: num: 1540 ,top_k: 1 count: 1118 accuracy: 0.7259740259740259
+with_WG: num: 1540 ,top_k: 5 count: 1350 accuracy: 0.8766233766233766
+with_WG: num: 1540 ,top_k: 10 count: 1399 accuracy: 0.9084415584415585
+with_WG: num: 1540 ,top_k: 20 count: 1445 accuracy: 0.9383116883116883
+with_WG: num: 1540 ,top_k: 50 count: 1475 accuracy: 0.9577922077922078
+with_WG: num: 1540 ,top_k: 100 count: 1490 accuracy: 0.9675324675324676
+with_WG: num: 1540 ,top_k: 200 count: 1503 accuracy: 0.9759740259740259
+比 dpr 高，不太能作为基线
+
+没有加 title 的bm25:
 
 
+HydraNet+DPR(EG，without EG):
 
-重新洗了一般 question，sim<=0.56，用还没训练完的dpr模型评估test：
-------index: 5178 --------
-top_ 20 _hit: True, index= 18
-top_ 50 _hit: True, index= 18
-top_ 100 _hit: True, index= 18
-top_1_hit: 2603 accuracy= 0.5026066808264144
-top_5_hit: 3828 accuracy= 0.7391388298899402
-top_10_hit: 4192 accuracy= 0.8094226684688164
-top_20_hit: 4502 accuracy= 0.8692797837420352
-top_50_hit: 4837 accuracy= 0.9339640857308361
-top_100_hit: 4989 accuracy= 0.9633133809615756
-total=5178
+no_EG: num: 5179 ,top_k: 1 count: 2939 accuracy: 0.5673745173745174
+no_EG: num: 5179 ,top_k: 5 count: 3999 accuracy: 0.772007722007722
+no_EG: num: 5179 ,top_k: 10 count: 4356 accuracy: 0.8409266409266409
+no_EG: num: 5179 ,top_k: 20 count: 4628 accuracy: 0.8934362934362934
+no_EG: num: 5179 ,top_k: 50 count: 4905 accuracy: 0.946911196911197
+no_EG: num: 5179 ,top_k: 100 count: 5026 accuracy: 0.9702702702702702
+with_WG: num: 5179 ,top_k: 1 count: 3986 accuracy: 0.7694980694980695
+with_WG: num: 5179 ,top_k: 5 count: 4637 accuracy: 0.8951737451737452
+with_WG: num: 5179 ,top_k: 10 count: 4819 accuracy: 0.9303088803088803
+with_WG: num: 5179 ,top_k: 20 count: 4895 accuracy: 0.944980694980695
+with_WG: num: 5179 ,top_k: 50 count: 4988 accuracy: 0.962934362934363
+with_WG: num: 5179 ,top_k: 100 count: 5026 accuracy: 0.9702702702702702
